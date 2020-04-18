@@ -3,14 +3,17 @@ name = "actix-interop"
 version = "0.1.0"
 authors = ["Diggory Blake <diggsey@googlemail.com>"]
 edition = "2018"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+license = "MIT/Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/Diggsey/actix-interop"
+homepage = "https://github.com/Diggsey/actix-interop"
+documentation = "https://docs.rs/actix-interop"
+description = "Use async/await syntax with actix actors."
+keywords = ["actix", "async", "await", "context", "atomic"]
+categories = ["asynchronous"]
 
 [dependencies]
 actix = "0.9.0"
-scoped-tls = "1.0"
+scoped-tls-hkt = "0.1.2"
 pin-project = "0.4.9"
 futures = "0.3.4"
-
-[patch.crates-io]
-scoped-tls = { git = "https://github.com/Diggsey/scoped-tls.git", branch = "db-mut" }

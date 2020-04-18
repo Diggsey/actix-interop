@@ -1,56 +1,77 @@
-use std::any::Any;
-use std::marker::PhantomData;
-use std::future::Future;
-use std::task::{Poll, Context};
-use std::pin::Pin;
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
 
-use actix::{Actor, ActorFuture, AsyncContext};
-use scoped_tls::scoped_thread_local;
+//! Use async/await syntax with actix actors.
+
+#![deny(missing_docs, warnings)]
+
+use std::any::Any;
+use std::future::Future;
+use std::marker::PhantomData;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+use actix::{Actor, ActorFuture, AsyncContext, ResponseActFuture};
 use pin_project::pin_project;
+use scoped_tls_hkt::scoped_thread_local;
 
 use self::local_handle::local_handle;
 
 mod local_handle;
 
-scoped_thread_local!(static mut CURRENT_ACTOR: dyn Any);
-scoped_thread_local!(static mut CURRENT_CONTEXT: dyn Any);
+scoped_thread_local!(static mut CURRENT_ACTOR_CTX: for<'a> (&'a mut dyn Any, &'a mut dyn Any));
 
 fn set_actor_context<A, F, R>(actor: &mut A, ctx: &mut A::Context, f: F) -> R
 where
     A: Actor,
     F: FnOnce() -> R,
 {
-    CURRENT_ACTOR.set(actor, || {
-        CURRENT_CONTEXT.set(ctx, f)
-    })
+    CURRENT_ACTOR_CTX.set((actor, ctx), f)
 }
 
+/// May be called from within a future spawned onto an actor context to gain mutable access
+/// to the actor's state and/or context. The future must have been wrapped using
+/// [`interop_actor`](FutureInterop::interop_actor) or
+/// [`interop_actor_boxed`](FutureInterop::interop_actor_boxed).
+///
+/// Nested calls to this function will panic, as only one mutable borrow can be given out
+/// at a time.
 pub fn with_ctx<A, F, R>(f: F) -> R
 where
     A: Actor + 'static,
-    F: FnOnce(&mut A, &mut A::Context) -> R
+    F: FnOnce(&mut A, &mut A::Context) -> R,
 {
-    CURRENT_ACTOR.with(|actor| {
-        CURRENT_CONTEXT.with(|ctx| {
-            let actor = actor.downcast_mut().expect("Future was spawned onto the wrong actor");
-            let ctx = ctx.downcast_mut().expect("Future was spawned onto the wrong actor");
-            f(actor, ctx)
-        })
+    CURRENT_ACTOR_CTX.with(|(actor, ctx)| {
+        let actor = actor
+            .downcast_mut()
+            .expect("Future was spawned onto the wrong actor");
+        let ctx = ctx
+            .downcast_mut()
+            .expect("Future was spawned onto the wrong actor");
+        f(actor, ctx)
     })
 }
 
-pub fn critical_section<A: Actor, F: Future>(f: F) -> impl Future<Output=F::Output>
+/// May be called in the same places as [`with_ctx`](with_ctx) to run a chunk of async
+/// code with exclusive access to an actor's state: no other futures spawned to this
+/// actor will be polled during the critical section.
+/// Unlike [`with_ctx`](with_ctx), calls to this function may be nested, although there
+/// is little point in doing so. Calling [`with_ctx`](with_ctx) from within a critical
+/// section is allowed (and expected).
+pub fn critical_section<A: Actor, F: Future>(f: F) -> impl Future<Output = F::Output>
 where
     A::Context: AsyncContext<A>,
     F: 'static,
 {
     let (f, handle) = local_handle(f);
-    with_ctx(|actor: &mut A, ctx: &mut A::Context| {
-        ctx.wait(f.interop_actor(actor))
-    });
+    with_ctx(|actor: &mut A, ctx: &mut A::Context| ctx.wait(f.interop_actor(actor)));
     handle
 }
 
+/// Future to ActorFuture adapter returned by [`interop_actor`](FutureInterop::interop_actor).
 #[pin_project]
 #[derive(Debug)]
 pub struct FutureInteropWrap<A: Actor, F> {
@@ -60,8 +81,11 @@ pub struct FutureInteropWrap<A: Actor, F> {
 }
 
 impl<A: Actor, F: Future> FutureInteropWrap<A, F> {
-    pub fn new(inner: F) -> Self {
-        Self { inner, phantom: PhantomData }
+    fn new(inner: F) -> Self {
+        Self {
+            inner,
+            phantom: PhantomData,
+        }
     }
 }
 
@@ -69,16 +93,28 @@ impl<A: Actor, F: Future> ActorFuture for FutureInteropWrap<A, F> {
     type Actor = A;
     type Output = F::Output;
 
-    fn poll(self: Pin<&mut Self>, actor: &mut A, ctx: &mut A::Context, task: &mut Context) -> Poll<Self::Output> {
-        set_actor_context(actor, ctx, || {
-            self.project().inner.poll(task)
-        })
+    fn poll(
+        self: Pin<&mut Self>,
+        actor: &mut A,
+        ctx: &mut A::Context,
+        task: &mut Context,
+    ) -> Poll<Self::Output> {
+        set_actor_context(actor, ctx, || self.project().inner.poll(task))
     }
 }
 
+/// Extension trait implemented for all futures. Import this trait to bring the
+/// [`interop_actor`](FutureInterop::interop_actor) and
+/// [`interop_actor_boxed`](FutureInterop::interop_actor_boxed) methods into scope.
 pub trait FutureInterop<A: Actor>: Future + Sized {
+    /// Convert a future using the `with_ctx` or `critical_section` methods into an ActorFuture.
     fn interop_actor(self, actor: &A) -> FutureInteropWrap<A, Self>;
-    fn interop_actor_boxed(self, actor: &A) -> Box<FutureInteropWrap<A, Self>> {
+    /// Convert a future using the `with_ctx` or `critical_section` methods into a boxed
+    /// ActorFuture.
+    fn interop_actor_boxed(self, actor: &A) -> ResponseActFuture<A, Self::Output>
+    where
+        Self: 'static,
+    {
         Box::new(self.interop_actor(actor))
     }
 }
@@ -91,7 +127,7 @@ impl<A: Actor, F: Future> FutureInterop<A> for F {
 
 #[cfg(test)]
 mod tests {
-    use super::{FutureInterop, with_ctx, critical_section};
+    use super::{critical_section, with_ctx, FutureInterop};
     use actix::prelude::*;
 
     // this is our Message
@@ -117,11 +153,13 @@ mod tests {
                 // Run some code with exclusive access to the actor
                 critical_section::<Self, _>(async {
                     with_ctx(|a: &mut Self, _| a.field += 1);
-                }).await;
+                })
+                .await;
 
                 // Return a result
                 Ok(msg.0 + msg.1)
-            }.interop_actor_boxed(self)
+            }
+            .interop_actor_boxed(self)
         }
     }
 
@@ -129,11 +167,13 @@ mod tests {
     fn it_works() {
         let mut system = System::new("test");
 
-        let res = system.block_on(async {
-            let addr = Summator { field: 0 }.start();
-    
-            addr.send(Sum(3, 4)).await
-        }).unwrap();
+        let res = system
+            .block_on(async {
+                let addr = Summator { field: 0 }.start();
+
+                addr.send(Sum(3, 4)).await
+            })
+            .unwrap();
 
         assert_eq!(res, Ok(7));
     }

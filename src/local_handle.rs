@@ -1,11 +1,11 @@
 use std::fmt;
+use std::future::Future;
 use std::panic;
 use std::pin::Pin;
-use std::future::Future;
 use std::task::{Context, Poll};
 
-use futures::future::FutureExt;
 use futures::channel::oneshot;
+use futures::future::FutureExt;
 use pin_project::{pin_project, project};
 
 /// The handle to a local future returned by
@@ -44,9 +44,7 @@ pub struct Local<Fut: Future> {
 
 impl<Fut: Future + fmt::Debug> fmt::Debug for Local<Fut> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Local")
-            .field(&self.future)
-            .finish()
+        f.debug_tuple("Local").field(&self.future).finish()
     }
 }
 
@@ -59,7 +57,7 @@ impl<Fut: Future> Future for Local<Fut> {
         let Local { tx, future } = self.project();
         if tx.as_mut().unwrap().poll_canceled(cx).is_ready() {
             // Cancelled, bail out
-            return Poll::Ready(())
+            return Poll::Ready(());
         }
 
         let output = match future.poll(cx) {
