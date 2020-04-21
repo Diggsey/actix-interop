@@ -14,7 +14,8 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use actix::{Actor, ActorFuture, AsyncContext, ResponseActFuture};
+use actix::{Actor, ActorFuture, ActorStream, AsyncContext, ResponseActFuture};
+use futures::Stream;
 use pin_project::pin_project;
 use scoped_tls_hkt::scoped_thread_local;
 
@@ -125,17 +126,69 @@ impl<A: Actor, F: Future> FutureInterop<A> for F {
     }
 }
 
+/// Stream to ActorStream adapter returned by [`interop_actor`](StreamInterop::interop_actor).
+#[pin_project]
+#[derive(Debug)]
+pub struct StreamInteropWrap<A: Actor, S> {
+    #[pin]
+    inner: S,
+    phantom: PhantomData<fn(&mut A, &mut A::Context)>,
+}
+
+impl<A: Actor, S: Stream> StreamInteropWrap<A, S> {
+    fn new(inner: S) -> Self {
+        Self {
+            inner,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<A: Actor, S: Stream> ActorStream for StreamInteropWrap<A, S> {
+    type Actor = A;
+    type Item = S::Item;
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        actor: &mut A,
+        ctx: &mut A::Context,
+        task: &mut Context,
+    ) -> Poll<Option<Self::Item>> {
+        set_actor_context(actor, ctx, || self.project().inner.poll_next(task))
+    }
+}
+
+/// Extension trait implemented for all streams. Import this trait to bring the
+/// [`interop_actor`](StreamInterop::interop_actor) and
+/// [`interop_actor_boxed`](StreamInterop::interop_actor_boxed) methods into scope.
+pub trait StreamInterop<A: Actor>: Stream + Sized {
+    /// Convert a stream using the `with_ctx` or `critical_section` methods into an ActorStream.
+    fn interop_actor(self, actor: &A) -> StreamInteropWrap<A, Self>;
+    /// Convert a stream using the `with_ctx` or `critical_section` methods into a boxed
+    /// ActorStream.
+    fn interop_actor_boxed(self, actor: &A) -> Box<dyn ActorStream<Item = Self::Item, Actor = A>>
+    where
+        Self: 'static,
+    {
+        Box::new(self.interop_actor(actor))
+    }
+}
+
+impl<A: Actor, S: Stream> StreamInterop<A> for S {
+    fn interop_actor(self, _actor: &A) -> StreamInteropWrap<A, Self> {
+        StreamInteropWrap::new(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{critical_section, with_ctx, FutureInterop};
     use actix::prelude::*;
 
-    // this is our Message
     #[derive(Message)]
-    #[rtype(result = "Result<usize, ()>")] // we have to define the response type for `Sum` message
-    struct Sum(usize, usize);
+    #[rtype(result = "Result<i32, ()>")] // we have to define the response type for `Sum` message
+    struct Sum(i32);
 
-    // Actor definition
     struct Summator {
         field: i32,
     }
@@ -144,37 +197,61 @@ mod tests {
         type Context = Context<Self>;
     }
 
-    // now we need to define `MessageHandler` for the `Sum` message.
     impl Handler<Sum> for Summator {
-        type Result = ResponseActFuture<Self, Result<usize, ()>>; // <- Message response type
+        type Result = ResponseActFuture<Self, Result<i32, ()>>; // <- Message response type
 
         fn handle(&mut self, msg: Sum, _ctx: &mut Context<Self>) -> Self::Result {
             async move {
                 // Run some code with exclusive access to the actor
-                critical_section::<Self, _>(async {
-                    with_ctx(|a: &mut Self, _| a.field += 1);
+                let accum = critical_section::<Self, _>(async {
+                    with_ctx(move |a: &mut Self, _| {
+                        a.field += msg.0;
+                        a.field
+                    })
                 })
                 .await;
 
                 // Return a result
-                Ok(msg.0 + msg.1)
+                Ok(accum)
             }
             .interop_actor_boxed(self)
         }
     }
 
+    impl StreamHandler<i32> for Summator {
+        fn handle(&mut self, msg: i32, _ctx: &mut Context<Self>) {
+            self.field += msg;
+        }
+        fn finished(&mut self, _ctx: &mut Context<Self>) {
+            assert_eq!(self.field, 10);
+            System::current().stop();
+        }
+    }
+
     #[test]
-    fn it_works() {
+    fn can_run_future() {
         let mut system = System::new("test");
 
         let res = system
             .block_on(async {
                 let addr = Summator { field: 0 }.start();
 
-                addr.send(Sum(3, 4)).await
+                addr.send(Sum(3)).await.unwrap().unwrap();
+                addr.send(Sum(4)).await
             })
             .unwrap();
 
         assert_eq!(res, Ok(7));
+    }
+
+    #[test]
+    fn can_run_stream() {
+        let system = System::new("test");
+
+        Summator::create(|ctx| {
+            ctx.add_stream(futures::stream::iter(1..5));
+            Summator { field: 0 }
+        });
+        system.run().unwrap();
     }
 }
