@@ -30,7 +30,7 @@ so the receiving part of the message handler must not require exclusive
 access to the actor while it is waiting. As a result, abstractions
 like the `AtomicResponse` type are too simplistic to help.
 
-To solve this problem, we use the [`critical_section`](critical_section)
+To solve this problem, we use the [`critical_section`](https://docs.rs/actix-interop/latest/actix_interop/fn.critical_section.html)
 function to allow specific parts of our message handler to be  atomic.
 
 ```rust
