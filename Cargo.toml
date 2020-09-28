@@ -15,5 +15,5 @@ categories = ["asynchronous"]
 [dependencies]
 actix = "0.9.0"
 scoped-tls-hkt = "0.1.2"
-pin-project = "0.4.9"
+pin-project = "0.4.21"
 futures = "0.3.4"
