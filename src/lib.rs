@@ -251,7 +251,7 @@ pub trait FutureInterop<A: Actor>: Future + Sized {
     where
         Self: 'static,
     {
-        Box::new(self.interop_actor(actor))
+        Box::pin(self.interop_actor(actor))
     }
 }
 
