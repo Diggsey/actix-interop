@@ -1,6 +1,6 @@
 [package]
 name = "actix-interop"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Diggory Blake <diggsey@googlemail.com>"]
 edition = "2018"
 license = "MIT/Apache-2.0"
@@ -13,7 +13,7 @@ keywords = ["actix", "async", "await", "context", "atomic"]
 categories = ["asynchronous"]
 
 [dependencies]
-actix = "0.10.0"
+actix = "0.12.0"
 scoped-tls-hkt = "0.1.2"
-pin-project = "0.4.21"
+pin-project = "1.0.8"
 futures = "0.3.4"

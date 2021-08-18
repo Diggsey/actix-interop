@@ -225,8 +225,7 @@ impl<A: Actor, F: Future> FutureInteropWrap<A, F> {
     }
 }
 
-impl<A: Actor, F: Future> ActorFuture for FutureInteropWrap<A, F> {
-    type Actor = A;
+impl<A: Actor, F: Future> ActorFuture<A> for FutureInteropWrap<A, F> {
     type Output = F::Output;
 
     fn poll(
@@ -279,8 +278,7 @@ impl<A: Actor, S: Stream> StreamInteropWrap<A, S> {
     }
 }
 
-impl<A: Actor, S: Stream> ActorStream for StreamInteropWrap<A, S> {
-    type Actor = A;
+impl<A: Actor, S: Stream> ActorStream<A> for StreamInteropWrap<A, S> {
     type Item = S::Item;
 
     fn poll_next(
@@ -301,7 +299,7 @@ pub trait StreamInterop<A: Actor>: Stream + Sized {
     fn interop_actor(self, actor: &A) -> StreamInteropWrap<A, Self>;
     /// Convert a stream using the `with_ctx` or `critical_section` methods into a boxed
     /// ActorStream.
-    fn interop_actor_boxed(self, actor: &A) -> Box<dyn ActorStream<Item = Self::Item, Actor = A>>
+    fn interop_actor_boxed(self, actor: &A) -> Box<dyn ActorStream<A, Item = Self::Item>>
     where
         Self: 'static,
     {
@@ -317,6 +315,7 @@ impl<A: Actor, S: Stream> StreamInterop<A> for S {
 
 #[cfg(test)]
 mod tests {
+
     use super::{critical_section, with_ctx, FutureInterop};
     use actix::prelude::*;
 
@@ -363,31 +362,23 @@ mod tests {
         }
     }
 
-    #[test]
-    fn can_run_future() {
-        let mut system = System::new("test");
+    #[actix::test]
+    async fn can_run_future() -> Result<(), Box<dyn std::error::Error>> {
+        let addr = Summator { field: 0 }.start();
 
-        let res = system
-            .block_on(async {
-                let addr = Summator { field: 0 }.start();
-
-                addr.send(Sum(3)).await.unwrap().unwrap();
-                addr.send(Sum(4)).await
-            })
-            .unwrap();
+        addr.send(Sum(3)).await.unwrap().unwrap();
+        let res = addr.send(Sum(4)).await?;
 
         assert_eq!(res, Ok(7));
+        Ok(())
     }
 
-    #[test]
-    fn can_run_stream() {
-        let system = System::new("test");
-
+    #[actix::test]
+    async fn can_run_stream() {
         Summator::create(|ctx| {
             ctx.add_stream(futures::stream::iter(1..5));
             Summator { field: 0 }
         });
-        system.run().unwrap();
     }
 
     mod pipeline {}
