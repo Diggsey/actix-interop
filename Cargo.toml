@@ -13,7 +13,7 @@ keywords = ["actix", "async", "await", "context", "atomic"]
 categories = ["asynchronous"]
 
 [dependencies]
-actix = "0.12.0"
+actix = "0.13.0"
 scoped-tls-hkt = "0.1.2"
 pin-project = "1.0.8"
 futures = "0.3.4"
