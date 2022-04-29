@@ -2,7 +2,7 @@
 name = "actix-interop"
 version = "0.3.0"
 authors = ["Diggory Blake <diggsey@googlemail.com>"]
-edition = "2018"
+edition = "2021"
 license = "MIT/Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/Diggsey/actix-interop"
