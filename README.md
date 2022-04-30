@@ -9,7 +9,7 @@ convenient way to control access to an actor's state.
 ```toml
 # Cargo.toml
 [dependencies]
-actix-interop = "0.2"
+actix-interop = "0.3"
 ```
 
 # Example

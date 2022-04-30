@@ -1,8 +1,8 @@
 [package]
 name = "actix-interop"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Diggory Blake <diggsey@googlemail.com>"]
-edition = "2018"
+edition = "2021"
 license = "MIT/Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/Diggsey/actix-interop"
@@ -13,7 +13,7 @@ keywords = ["actix", "async", "await", "context", "atomic"]
 categories = ["asynchronous"]
 
 [dependencies]
-actix = "0.12.0"
+actix = "0.13.0"
 scoped-tls-hkt = "0.1.2"
 pin-project = "1.0.8"
 futures = "0.3.4"
