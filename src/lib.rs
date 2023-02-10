@@ -337,7 +337,7 @@ mod tests {
         fn handle(&mut self, msg: Sum, _ctx: &mut Context<Self>) -> Self::Result {
             async move {
                 // Run some code with exclusive access to the actor
-                let accum = critical_section::<Self, _>(async {
+                let accum = critical_section::<Self, _>(async move {
                     with_ctx(move |a: &mut Self, _| {
                         a.field += msg.0;
                         a.field
